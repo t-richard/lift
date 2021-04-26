@@ -1,11 +1,16 @@
-import { pluginConfigExt, runServerless } from "../utils/runServerless";
+import { baseConfig, pluginConfigExt, runServerless } from "../utils/runServerless";
 
 describe("static website", () => {
     it("should create all required resources", async () => {
         const { cfTemplate } = await runServerless({
-            fixture: "staticWebsite",
-            configExt: pluginConfigExt,
             cliArgs: ["package"],
+            config: Object.assign(baseConfig, {
+                "static-website": {
+                    landing: {
+                        path: ".",
+                    },
+                },
+            }),
         });
         expect(Object.keys(cfTemplate.Resources)).toStrictEqual([
             "ServerlessDeploymentBucket",
@@ -187,11 +192,19 @@ describe("static website", () => {
         });
     });
 
-    it("should support custom domains", async () => {
+    it("should support a custom domain", async () => {
         const { cfTemplate } = await runServerless({
-            fixture: "staticWebsiteDomain",
-            configExt: pluginConfigExt,
             cliArgs: ["package"],
+            config: Object.assign(baseConfig, {
+                "static-website": {
+                    landing: {
+                        path: ".",
+                        domain: "example.com",
+                        certificate:
+                            "arn:aws:acm:us-east-1:123456615250:certificate/0a28e63d-d3a9-4578-9f8b-14347bfe8123",
+                    },
+                },
+            }),
         });
         // Check that CloudFront uses the custom ACM certificate and custom domain
         expect(cfTemplate.Resources.LandingWebsiteCDNCFDistribution8079F676).toMatchObject({
@@ -225,9 +238,17 @@ describe("static website", () => {
 
     it("should support multiple custom domains", async () => {
         const { cfTemplate } = await runServerless({
-            fixture: "staticWebsiteDomains",
-            configExt: pluginConfigExt,
             cliArgs: ["package"],
+            config: Object.assign(baseConfig, {
+                "static-website": {
+                    landing: {
+                        path: ".",
+                        domain: ["example.com", "www.example.com"],
+                        certificate:
+                            "arn:aws:acm:us-east-1:123456615250:certificate/0a28e63d-d3a9-4578-9f8b-14347bfe8123",
+                    },
+                },
+            }),
         });
         // Check that CloudFront uses all the custom domains
         expect(cfTemplate.Resources.LandingWebsiteCDNCFDistribution8079F676).toMatchObject({
