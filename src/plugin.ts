@@ -31,6 +31,7 @@ const CONSTRUCTS_DEFINITION = {
                         constructs["static-website"].schema,
                         constructs.webhook.schema,
                         constructs.queue.schema,
+                        constructs["server-side-website"].schema,
                     ],
                 },
                 {

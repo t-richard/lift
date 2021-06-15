@@ -11,20 +11,14 @@ import {
 import * as cloudfront from "@aws-cdk/aws-cloudfront";
 import { Construct as CdkConstruct, CfnOutput, Duration, RemovalPolicy } from "@aws-cdk/core";
 import { FromSchema } from "json-schema-to-ts";
-import {
-    DeleteObjectsOutput,
-    DeleteObjectsRequest,
-    ListObjectsV2Output,
-    ListObjectsV2Request,
-} from "aws-sdk/clients/s3";
 import chalk from "chalk";
-import { CreateInvalidationRequest, CreateInvalidationResult } from "aws-sdk/clients/cloudfront";
 import { S3Origin } from "@aws-cdk/aws-cloudfront-origins";
 import * as acm from "@aws-cdk/aws-certificatemanager";
 import { log } from "../utils/logger";
 import { s3Sync } from "../utils/s3-sync";
 import AwsProvider from "../classes/AwsProvider";
 import Construct from "../classes/Construct";
+import { emptyBucket, invalidateCloudFrontCache } from "../classes/aws";
 
 export const STATIC_WEBSITE_DEFINITION = {
     type: "object",
@@ -71,7 +65,7 @@ export class StaticWebsite extends CdkConstruct implements Construct {
 
         if (configuration.domain !== undefined && configuration.certificate === undefined) {
             throw new Error(
-                `Invalid configuration for the static website ${id}: if a domain is configured, then a certificate ARN must be configured as well.`
+                `Invalid configuration for the static website "${id}": if a domain is configured, then a certificate ARN must be configured as well.`
             );
         }
 
@@ -203,22 +197,7 @@ export class StaticWebsite extends CdkConstruct implements Construct {
         if (distributionId === undefined) {
             return;
         }
-        await this.provider.request<CreateInvalidationRequest, CreateInvalidationResult>(
-            "CloudFront",
-            "createInvalidation",
-            {
-                DistributionId: distributionId,
-                InvalidationBatch: {
-                    // This should be a unique ID: we use a timestamp
-                    CallerReference: Date.now().toString(),
-                    Paths: {
-                        // Invalidate everything
-                        Items: ["/*"],
-                        Quantity: 1,
-                    },
-                },
-            }
-        );
+        await invalidateCloudFrontCache(this.provider, distributionId);
     }
 
     async preRemove(): Promise<void> {
@@ -231,19 +210,7 @@ export class StaticWebsite extends CdkConstruct implements Construct {
         log(
             `Emptying S3 bucket '${bucketName}' for the '${this.id}' static website, else CloudFormation will fail (it cannot delete a non-empty bucket)`
         );
-        const data = await this.provider.request<ListObjectsV2Request, ListObjectsV2Output>("S3", "listObjectsV2", {
-            Bucket: bucketName,
-        });
-        if (data.Contents === undefined) {
-            return;
-        }
-        const keys = data.Contents.map((item) => item.Key).filter((key): key is string => key !== undefined);
-        await this.provider.request<DeleteObjectsRequest, DeleteObjectsOutput>("S3", "deleteObjects", {
-            Bucket: bucketName,
-            Delete: {
-                Objects: keys.map((key) => ({ Key: key })),
-            },
-        });
+        await emptyBucket(this.provider, bucketName);
     }
 
     async getUrl(): Promise<string | undefined> {
