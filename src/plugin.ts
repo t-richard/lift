@@ -14,7 +14,7 @@ import type {
 } from "./types/serverless";
 import { AwsProvider, ConstructInterface } from "./classes";
 import { log } from "./utils/logger";
-import { StaticConstructInterface } from "./classes/Construct";
+import { assertValidConstructClass, StaticConstructInterface } from "./classes/Construct";
 import ServerlessError from "./utils/error";
 
 const CONSTRUCT_ID_PATTERN = "^[a-zA-Z0-9-_]+$";
@@ -91,6 +91,7 @@ class LiftPlugin {
         };
 
         this.registerProviders();
+        this.loadCustomConstructs();
         this.registerConstructsSchema();
         this.registerConfigSchema();
         this.registerCommands();
@@ -118,6 +119,26 @@ class LiftPlugin {
     private registerProviders() {
         this.providerClasses.push(AwsProvider);
         this.providers.push(new AwsProvider(this.serverless));
+    }
+
+    private loadCustomConstructs() {
+        const constructsConfiguration = get(this.serverless.configurationInput, "constructs", {}) as Record<
+            string,
+            { type: string }
+        >;
+        // For each construct
+        for (const constructConfig of Object.values(constructsConfiguration)) {
+            // Custom constructs are loaded locally via their type: that's why we check if the type is a local path
+            if (constructConfig.type.startsWith("./")) {
+                // Load the construct from an external file
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const constructClass = require(path.join(process.cwd(), constructConfig.type));
+                // Force the type name to be the same as the actual type declared in the configuration file
+                constructClass.type = constructConfig.type;
+                assertValidConstructClass(constructClass);
+                AwsProvider.registerConstructs(constructClass);
+            }
+        }
     }
 
     private loadConstructs(): void {
