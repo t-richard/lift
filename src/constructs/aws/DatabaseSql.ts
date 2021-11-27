@@ -1,6 +1,7 @@
 import type { Construct as CdkConstruct } from "@aws-cdk/core";
-import { CfnOutput, Duration, SecretValue } from "@aws-cdk/core";
+import { CfnOutput, Duration, Fn, SecretValue } from "@aws-cdk/core";
 import type { FromSchema } from "json-schema-to-ts";
+import type { DatabaseProxy } from "@aws-cdk/aws-rds";
 import {
     Credentials,
     DatabaseInstance,
@@ -9,10 +10,13 @@ import {
     MysqlEngineVersion,
     PostgresEngineVersion,
 } from "@aws-cdk/aws-rds";
-import { InstanceType, SubnetType } from "@aws-cdk/aws-ec2";
+import { InstanceType, Port, SecurityGroup, SubnetType } from "@aws-cdk/aws-ec2";
 import type { IInstanceEngine } from "@aws-cdk/aws-rds/lib/instance-engine";
 import { AwsConstruct } from "@lift/constructs/abstracts";
 import type { AwsProvider } from "@lift/providers";
+import { CfnReference } from "@aws-cdk/core/lib/private/cfn-reference";
+import type { CfnDBInstance } from "@aws-cdk/aws-rds/lib/rds.generated";
+import ServerlessError from "../../utils/error";
 
 const SCHEMA = {
     type: "object",
@@ -52,6 +56,7 @@ export class DatabaseSql extends AwsConstruct {
     private readonly dbHostOutput: CfnOutput;
     private readonly username: string;
     private passwordSecretName: string | undefined;
+    private proxy: DatabaseProxy;
 
     constructor(
         scope: CdkConstruct,
@@ -63,19 +68,19 @@ export class DatabaseSql extends AwsConstruct {
 
         const vpc = provider.enableVpc();
 
-        this.username = this.configuration.username ?? "admin";
+        this.username = this.configuration.username ?? "main";
 
         this.dbInstance = new DatabaseInstance(this, "Instance", {
             // https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-rds.DatabaseInstance.html#construct-props
             instanceIdentifier: configuration.name ?? `${this.provider.stackName}-${id}`,
-            databaseName: this.safeDbName(configuration.name ?? `${this.provider.stackName}-${id}`),
+            databaseName: this.getDbName(),
             engine: this.getEngineVersion(),
             instanceType: new InstanceType(configuration.instanceType ?? "t3.micro"),
             credentials: this.credentials(),
             vpc,
             // Put the instance in the private subnet
             vpcSubnets: {
-                subnetType: SubnetType.PRIVATE,
+                subnetType: SubnetType.PRIVATE_WITH_NAT,
             },
             // We go with 20 (the minimum) instead of 100 by default, because it is much cheaper
             allocatedStorage: configuration.storageSize ?? 20,
@@ -84,12 +89,19 @@ export class DatabaseSql extends AwsConstruct {
             cloudwatchLogsExports: this.logsToEnable(),
         });
 
+        this.dbInstance.connections.allowDefaultPortFrom(vpc.appSecurityGroup);
+
+        this.proxy = this.dbInstance.addProxy("RdsProxy", {
+            secrets: [],
+            vpc: vpc,
+        });
+
         this.dbHostOutput = new CfnOutput(this, "DbHost", {
             value: this.dbInstance.instanceEndpoint.hostname,
         });
     }
 
-    private credentials() {
+    private credentials(): Credentials {
         const password = this.configuration.password ?? "";
         if (password === "") {
             // If no password is defined, a random one will be generated and stored in Secrets Manager
@@ -114,16 +126,36 @@ export class DatabaseSql extends AwsConstruct {
     }
 
     variables(): Record<string, unknown> {
+        const dbNode = this.dbInstance.node.defaultChild as CfnDBInstance;
+
         return {
             host: this.dbInstance.instanceEndpoint.hostname,
             port: this.dbInstance.instanceEndpoint.port,
             username: this.username,
             passwordSecret: this.passwordSecretName,
+            databaseUrl: Fn.join("", [
+                `${this.getEngine()}://${this.username}:${this.getPlainPassword()}@`,
+                dbNode.getAtt("Endpoint.Address").toString(),
+                `/${this.getDbName()}`,
+            ]),
         };
     }
 
-    private safeDbName(name: string): string {
+    private getDbName(): string {
+        const name = this.configuration.name ?? `${this.provider.stackName}-${this.id}`;
+
         return name.replace(/-/g, "").replace(/_/g, "");
+    }
+
+    private getPlainPassword(): string {
+        if (this.configuration.password === undefined) {
+            throw new ServerlessError(
+                `Can't get the password as it was not provided for SQL Database '${this.id}'`,
+                "LIFT_INVALID_CONSTRUCT_CONFIGURATION"
+            );
+        }
+
+        return this.configuration.password;
     }
 
     private getEngine() {

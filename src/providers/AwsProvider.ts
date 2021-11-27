@@ -5,7 +5,6 @@ import type { ProviderInterface } from "@lift/providers";
 import type { ConstructInterface, StaticConstructInterface } from "@lift/constructs";
 import {
     DatabaseDynamoDBSingleTable,
-    DatabaseSql,
     Queue,
     ServerSideWebsite,
     StaticWebsite,
@@ -13,6 +12,7 @@ import {
     Vpc,
     Webhook,
 } from "@lift/constructs/aws";
+import { DatabaseSql } from "@lift/constructs/aws/DatabaseSql";
 import { getStackOutput } from "../CloudFormation";
 import type { CloudformationTemplate, Provider as LegacyAwsProvider, Serverless } from "../types/serverless";
 import { awsRequest } from "../classes/aws";
